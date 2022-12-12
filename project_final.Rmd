@@ -1,0 +1,150 @@
+---
+title: "multilevel regression"
+author: "Brenda"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table) #fread
+library(GGally) #ggpairs
+library(lmerTest) #p-value
+library(lattice) #qqmath
+library(ggplot2)
+library(merTools) #plotFEsim
+library(gridExtra) #grid.arrange
+``` 
+# Abstract:
+In this essay, we focus on health and use All Payer Hospital Inpatient Discharges by Facility (SPARCS De-Identified) dataset to explore factors that influence patients' average length of stay. At first, we use EDA to analyze situations with raw data and convert some data into numbers which are easy for us to build models. Then, because of the difference in hospitals, we use the multilevel regression model to see how factors influent patients' average length of stay. Finally, we do some checks for the built model.
+
+# Introduction
+Health is a big topic that has received much attention. Here, we talk about all-payer hospital inpatient discharges by facilities. The collected data is from The Statewide Planning and Research Cooperative System which is a comprehensive data reporting system that collects patient-level detail on patient characteristics, diagnoses, treatments, services, and charges for every hospital discharge from an Article 28 facility; ambulatory surgery discharges from hospital-based ambulatory surgery centers and all other facilities providing ambulatory surgery services; and emergency department visits in New York State. 
+
+```{r}
+data <- read.csv("/Users/brenda/Downloads/All_Payer_Hospital_Inpatient_Discharges_by_Facility__SPARCS_De-Identified___Beginning_2009.csv")
+```
+
+
+EDA:
+```{r}
+#describe
+ggplot(data)+
+  geom_bar(aes(x = Patient.Gender, fill = Patient.Gender))
+ggplot(data)+
+  geom_bar(aes(x = APR.Medical.Surgical.Description, fill = APR.Medical.Surgical.Description))+
+  guides(fill = FALSE)
+ggplot(data)+
+  geom_bar(aes(x = Type.of.Insurance, fill = Type.of.Insurance))
+ggplot(data)+
+  geom_bar(aes(x = Discharged.Dead.or.Alive, fill = Discharged.Dead.or.Alive))+
+  guides(fill = FALSE)
+ggplot(data)+
+  geom_bar(aes(x = Patient.Age.Group, fill = Patient.Age.Group))
+data %>%
+  group_by(Discharge.Year) %>%
+  summarise(Number = sum(Number.of.Discharges))%>%
+  ggplot()+
+  geom_line(aes(Discharge.Year, y = Number))+
+  guides(fill = FALSE)
+
+#not abviously
+#Patient.Gende and Average.Length.of.Stay
+boxplot(data$'Average.Length.of.Stay' ~ data$'Patient.Gender',horizontal = TRUE)
+#APR.Medical.Surgical.Description and Average.Length.of.Stay
+boxplot(data$'Average.Length.of.Stay' ~ data$'APR.Medical.Surgical.Description',horizontal = TRUE)
+#Type.of.Insurance and Average.Length.of.Stay
+boxplot(data$'Average.Length.of.Stay' ~ data$'Type.of.Insurance',horizontal = TRUE)
+#Patient.Age.Group and Average.Length.of.Stay
+boxplot(data$'Average.Length.of.Stay' ~ data$'Patient.Age.Group',horizontal = TRUE)
+#Discharge.Year and Average.Length.of.Stay
+boxplot(data$'Average.Length.of.Stay' ~ data$'Discharge.Year',horizontal = TRUE)
+#try table
+data %>%
+  group_by('Patient.Gender') %>%
+  summarise(mean('Average.Length.of.Stay', na.rm=FALSE), sd('Average.Length.of.Stay', na.rm=FALSE), median('Average.Length.of.Stay', na.rm=FALSE), max('Average.Length.of.Stay', na.rm=FALSE), min('Average.Length.of.Stay', na.rm=FALSE))
+```
+From figure 1, we know the man and women in this dataset are similar. Therefore, conclusions cannot be affected because of the difference percentage of gender.
+According to figure 2, we can see that most of the patients’ APR-DRG-specific classification is medical, and a few patients’ APR-DRG-specific classification is not applicable.
+When we look at what kind of insurance(Figure 3) patients take when they are in the hospital, we can find that the number of people who take Commercial insurance makes up first place compared with others. The number of people who take Medicaid insurance ranks second place and the number of people with Medicare insurance is close to it. Only some patients take other insurance except those patients we do not know what kind of insurance they take. 
+When identifying if the patient was discharged from the facility alive or dead (Figure 4), we can see most patients are alive even though some of them are dead.
+According to the car chart, we find that most of the patients in this dataset are more than 18. People aged between 41-64 are the most, which means their bodies easily have problems and need to go to the hospital compared with others. 
+
+# Data Processing:
+For easy access to data in R Studio, we change some character variables into numeric ones. The details are below:
+```{r}
+#clean data
+length(unique(data$Hospital.Name))
+length(unique(data$Facility.ID))
+length(unique(data$APR.Medical.Surgical.Description))
+unique(data$APR.Medical.Surgical.Description)
+#"Medical"=1        "Surgical"=2       "Not Applicable"=3
+data$APR.Medical.Surgical.Description <- ifelse(data$APR.Medical.Surgical.Description=="Medical", 1,
+       ifelse(data$APR.Medical.Surgical.Description=="Surgical", 2, 3))
+length(unique(data$Type.of.Insurance))
+unique(data$Type.of.Insurance)
+#"Commercial"=1 "Medicare"=2   "Medicaid"=3  "Other"=4 "Unknown"=5   
+data$Type.of.Insurance <- ifelse(data$Type.of.Insurance=="Commercial", 1,
+       ifelse(data$Type.of.Insurance=="Medicare", 2, 
+              ifelse(data$Type.of.Insurance=="Medicaid", 3,
+                     ifelse(data$Type.of.Insurance=="Other", 4, 5))))
+length(unique(data$Patient.Gender))
+unique(data$Patient.Gender)
+#"Male"=1    "Female"=2  "Unknown"=3
+data$Patient.Gender <- ifelse(data$Patient.Gender=="Male", 1, 
+       ifelse(data$Patient.Gender=="Female", 2, 3))
+length(unique(data$Discharged.Dead.or.Alive))
+unique(data$Discharged.Dead.or.Alive)
+#"Discharged Alive"=1 "Discharged Dead"=2 
+data$Discharged.Dead.or.Alive <- ifelse(data$Discharged.Dead.or.Alive=="Discharged Alive", 1, 2)
+length(unique(data$Patient.Age.Group))
+unique(data$Patient.Age.Group)
+#"1-12"=1  "13-17"=2  "18-40"=3  "41-64"=4  "65-74"=5  "75+"=6  "0"=0
+data$Patient.Age.Group <- ifelse(data$Patient.Age.Group=="1-12", 1,
+       ifelse(data$Patient.Age.Group=="13-17", 2,
+              ifelse(data$Patient.Age.Group=="18-40", 3,
+                     ifelse(data$Patient.Age.Group=="41-64", 4,
+                            ifelse(data$Patient.Age.Group=="65-74", 5,
+                                   ifelse(data$Patient.Age.Group=="75+", 6, 0))))))
+#data1 <- data[data$Patient.Age.Group != "0",]
+# data1 <- data[,-length(data1)]
+# length(unique(data$Discharge.Year))
+# unique(data$Discharge.Year)
+# data %>%
+#   group_by(Discharge.Year) %>%
+#   count(Discharge.Year)
+```
+
+# Model build
+
+```{r}
+#2016
+data2016 <- data[data$Discharge.Year==2016,]
+ggpairs(data2016[, c("APR.Medical.Surgical.Description", "Type.of.Insurance", "Patient.Gender", "Discharged.Dead.or.Alive", "Patient.Age.Group", "Number.of.Discharges", "Average.Length.of.Stay")])
+fit_slope2 <- lmer(`Average.Length.of.Stay` ~ `APR.Medical.Surgical.Description`+ `Type.of.Insurance`+ `Patient.Gender`+ `Discharged.Dead.or.Alive`+ `Patient.Age.Group` + 
+                    (1 + `APR.Medical.Surgical.Description`+ `Type.of.Insurance`+ `Patient.Gender`+ `Discharged.Dead.or.Alive`+ `Patient.Age.Group` | `Facility.ID`) , data = data2016)
+summary(fit_slope2)
+```
+
+```{r}
+fixef(fit_slope2)
+round(ranef(fit_slope2)$`Facility.ID`, digits = 2)[1:10, ]
+plotFEsim(FEsim(fit_slope2, n.sims = 100), level = 0.9, stat = 'median', intercept = FALSE)
+coef(fit_slope2)
+```
+
+## model check
+```{r}
+par(mfrow = c(1,2))
+residul_plot1 <- plot(fit_slope2)
+residul_plot1
+qq_plot1 <- qqmath(fit_slope2)
+qq_plot1
+grid.arrange(residul_plot1, qq_plot1, ncol = 2)
+```
+When we check this model, we use residual plot and Q-Q plot. As for the residual plot, we use it to assess the model's overall accuracy and the accuracy of individual predictions. However, we see that residuals not distribute equally around 0 and have some trend. So, this model’s accuracy is not good. Besides, we also can see that the model’s accuracy exist some problems when we plot Q-Q plot. Because head and tail data are not close to the line.
+
+# Discussion
+During the period when we analyze and build the model, we find the variables that we used are limited. We need to find more variables to realize the relationship with patients' average length of stay. Besides, the low accuracy of the model verified again that we need to find more correlated variables with patients' average length of stay. Even though there are many things we can do in the future, we know the relationship between APR.Medical.Surgical.Description, Type.of.Insurance, Patient.Gender, Discharged.Dead.or.Alive and Patient.Age.Group and patients' average length of stay and give us a mind so that we know how to study patients' average length of stay.
+
+
